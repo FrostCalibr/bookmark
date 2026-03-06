@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Redirects — Bookmark Manager</title>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="shell">
+
+  <!-- ── Header ── -->
+  <header>
+    <div class="logo">
+      <div class="logo-icon">⇄</div>
+      redirects
+    </div>
+    <span class="count-badge" id="total-count">0 links</span>
+    <div class="header-right">
+      <div class="sync-status" id="sync-status">
+        <span class="sync-dot"></span>
+        <span class="sync-label">–</span>
+      </div>
+      <div class="header-search">
+        <span class="s-icon">⌕</span>
+        <input type="text" id="search-input" placeholder="search… (Ctrl+K)" oninput="renderAll()">
+      </div>
+    </div>
+  </header>
+
+  <!-- ── Sidebar ── -->
+  <aside>
+    <div class="sidebar-section">
+      <div class="sidebar-label">View</div>
+      <button class="group-nav-item active" id="nav-all" onclick="setView('all')">
+        <span style="font-size:13px">◈</span>
+        All Bookmarks
+        <span class="group-count" id="count-all">0</span>
+      </button>
+    </div>
+
+    <div class="sidebar-divider"></div>
+
+    <div class="sidebar-section">
+      <div class="sidebar-label">
+        Groups
+        <button class="sidebar-add-btn" onclick="openModal('group')" title="New group">+</button>
+      </div>
+      <div id="sidebar-groups"></div>
+    </div>
+
+    <div class="sidebar-divider"></div>
+    <button class="sidebar-btn" onclick="openModal('bookmark')">＋ &nbsp;Add Bookmark</button>
+    <button class="sidebar-btn" onclick="exportData()">↑ &nbsp;Export JSON</button>
+    <button class="sidebar-btn" onclick="document.getElementById('import-file').click()">↓ &nbsp;Import JSON</button>
+    <input type="file" id="import-file" accept=".json" style="display:none" onchange="importData(event)">
+  </aside>
+
+  <!-- ── Main ── -->
+  <main id="main-area"></main>
+
+</div><!-- /shell -->
+
+
+<!-- ══════════════════════════════════════
+     Modal: Add Bookmark
+════════════════════════════════════════ -->
+<div class="overlay" id="modal-bookmark">
+  <div class="modal">
+    <div class="modal-title">Add Bookmark</div>
+    <div class="modal-sub">// new redirect entry</div>
+
+    <div class="field">
+      <label>Name</label>
+      <input type="text" id="bm-name" placeholder="e.g. GitHub">
+    </div>
+    <div class="field">
+      <label>URL</label>
+      <input type="text" id="bm-url" placeholder="https://..." oninput="refreshFaviconPreview('bm')">
+    </div>
+    <div class="field">
+      <label>Hint <span style="opacity:.5;font-weight:400">(optional note)</span></label>
+      <textarea id="bm-hint" placeholder="A short description or reminder…"></textarea>
+    </div>
+
+    <!-- Icon picker -->
+    <div class="field">
+      <label>Icon</label>
+      <div id="bm-icon-tabs"></div>
+      <div id="bm-icon-favicon-pane" class="icon-pane active"></div>
+      <div id="bm-icon-emoji-pane"   class="icon-pane"></div>
+    </div>
+
+    <div class="field">
+      <label>Group</label>
+      <select id="bm-group"></select>
+    </div>
+
+    <div class="modal-actions">
+      <button class="btn btn-ghost" onclick="closeModal('bookmark')">Cancel</button>
+      <button class="btn btn-primary" onclick="saveBookmark()">Save Bookmark</button>
+    </div>
+  </div>
+</div>
+
+
+<!-- ══════════════════════════════════════
+     Modal: New Group
+════════════════════════════════════════ -->
+<div class="overlay" id="modal-group">
+  <div class="modal">
+    <div class="modal-title">New Group</div>
+    <div class="modal-sub">// create a collection</div>
+
+    <div class="field">
+      <label>Group Name</label>
+      <input type="text" id="grp-name" placeholder="e.g. Dev Tools">
+    </div>
+    <div class="field">
+      <label>Color</label>
+      <div class="color-row" id="grp-color-swatches"></div>
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" onclick="closeModal('group')">Cancel</button>
+      <button class="btn btn-primary" onclick="saveGroup()">Create Group</button>
+    </div>
+  </div>
+</div>
+
+
+<!-- ══════════════════════════════════════
+     Modal: Edit Bookmark
+════════════════════════════════════════ -->
+<div class="overlay" id="modal-edit">
+  <div class="modal">
+    <div class="modal-title">Edit Bookmark</div>
+    <div class="modal-sub">// update entry</div>
+    <input type="hidden" id="edit-id">
+
+    <div class="field">
+      <label>Name</label>
+      <input type="text" id="edit-name">
+    </div>
+    <div class="field">
+      <label>URL</label>
+      <input type="text" id="edit-url" oninput="refreshFaviconPreview('edit')">
+    </div>
+    <div class="field">
+      <label>Hint <span style="opacity:.5;font-weight:400">(optional note)</span></label>
+      <textarea id="edit-hint" placeholder="A short description or reminder…"></textarea>
+    </div>
+
+    <!-- Icon picker -->
+    <div class="field">
+      <label>Icon</label>
+      <div id="edit-icon-tabs"></div>
+      <div id="edit-icon-favicon-pane" class="icon-pane active"></div>
+      <div id="edit-icon-emoji-pane"   class="icon-pane"></div>
+    </div>
+
+    <div class="field">
+      <label>Group</label>
+      <select id="edit-group"></select>
+    </div>
+
+    <div class="modal-actions">
+      <button class="btn btn-ghost" onclick="closeModal('edit')">Cancel</button>
+      <button class="btn btn-primary" onclick="updateBookmark()">Update</button>
+    </div>
+  </div>
+</div>
+
+
+<!-- Toast -->
+<div class="toast" id="toast"></div>
+
+<script src="app.js"></script>
+</body>
+</html>
