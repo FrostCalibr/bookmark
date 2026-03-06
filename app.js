@@ -1,9 +1,47 @@
-// ═══════════════════════════════════════════
+// ═══════════════════════════════════════════════════════
 //  REDIRECTS — app.js
-//  Cloud storage via window.storage API
-// ═══════════════════════════════════════════
+//  Cloud sync via Firebase Firestore
+//
+//  ⚙️  SETUP:
+//  1. Go to console.firebase.google.com → New project
+//  2. Add Web app → copy firebaseConfig below
+//  3. Firestore Database → Create → Test mode
+//  4. Replace the firebaseConfig object below with yours
+// ═══════════════════════════════════════════════════════
 
-const STORAGE_KEY = 'redirects-data-v1';
+import { initializeApp } from "https://www.gstatic.com/firebasejs/11.4.0/firebase-app.js";
+import {
+  getFirestore, doc, getDoc, setDoc, onSnapshot
+} from "https://www.gstatic.com/firebasejs/11.4.0/firebase-firestore.js";
+
+// ── 🔧 PASTE YOUR FIREBASE CONFIG HERE ──────────────────
+const firebaseConfig = {
+
+  apiKey: "AIzaSyCAugqjSIb7aTzI0AGjwt2tJZxWpP05oMI",
+
+  authDomain: "bookmark-b6fe9.firebaseapp.com",
+
+  projectId: "bookmark-b6fe9",
+
+  storageBucket: "bookmark-b6fe9.firebasestorage.app",
+
+  messagingSenderId: "349146218114",
+
+  appId: "1:349146218114:web:08b207f4c8074a79437e9b",
+
+  measurementId: "G-KDT7XBBG2X"
+
+};
+
+
+// ────────────────────────────────────────────────────────
+
+const DOC_PATH = { collection: "redirects", document: "data" };
+
+const app = initializeApp(firebaseConfig);
+const db  = getFirestore(app);
+
+// ── Constants ────────────────────────────────────────────
 
 const COLORS = [
   '#6c63ff','#a855f7','#1fd18a','#f5c842',
@@ -22,58 +60,96 @@ const EMOJIS = [
   '📬','📦','🗂️','🗃️','🔑','🧲','💬','📣'
 ];
 
+// ── State ────────────────────────────────────────────────
+
 let state = {
   groups: [],
   bookmarks: [],
   currentView: 'all',
   selectedColor: COLORS[0],
-  // icon picker state
-  iconMode: 'favicon',   // 'favicon' | 'emoji'
+  iconMode: 'favicon',
   selectedEmoji: '🔗',
 };
 
-// ── Cloud Storage ──────────────────────────
+let _saveTimeout = null;
 
-async function cloudSave() {
-  setSyncStatus('syncing');
-  try {
-    const payload = JSON.stringify({ groups: state.groups, bookmarks: state.bookmarks });
-    const result = await window.storage.set(STORAGE_KEY, payload);
-    if (!result) throw new Error('Storage returned null');
-    setSyncStatus('synced');
-  } catch (e) {
-    console.error('Cloud save error:', e);
-    setSyncStatus('error');
-  }
-}
+// ── Firestore ────────────────────────────────────────────
 
 async function cloudLoad() {
   setSyncStatus('syncing');
   try {
-    const result = await window.storage.get(STORAGE_KEY);
-    if (result && result.value) {
-      const data = JSON.parse(result.value);
+    const ref  = doc(db, DOC_PATH.collection, DOC_PATH.document);
+    const snap = await getDoc(ref);
+    if (snap.exists()) {
+      const data = snap.data();
       if (data.groups)    state.groups    = data.groups;
       if (data.bookmarks) state.bookmarks = data.bookmarks;
+    } else {
+      seedDefaults();
     }
     setSyncStatus('synced');
+
+    // Listen for real-time updates (multi-device sync)
+    onSnapshot(ref, (snap) => {
+      if (!snap.exists()) return;
+      const data = snap.data();
+      if (data.groups)    state.groups    = data.groups;
+      if (data.bookmarks) state.bookmarks = data.bookmarks;
+      renderAll();
+      setSyncStatus('synced');
+    });
+
   } catch (e) {
-    // Key doesn't exist yet — first run
-    setSyncStatus('synced');
+    console.error('Firestore load error:', e);
+    setSyncStatus('error');
+    // Fall back to localStorage if Firestore fails
+    const saved = localStorage.getItem('redirects_fallback');
+    if (saved) {
+      try {
+        const data = JSON.parse(saved);
+        if (data.groups)    state.groups    = data.groups;
+        if (data.bookmarks) state.bookmarks = data.bookmarks;
+      } catch (_) {}
+    } else {
+      seedDefaults();
+    }
   }
-  if (!state.groups.length) seedDefaults();
   renderAll();
 }
 
+// Debounced save — batches rapid changes into one write
+function cloudSave() {
+  setSyncStatus('syncing');
+  clearTimeout(_saveTimeout);
+  _saveTimeout = setTimeout(async () => {
+    try {
+      const ref = doc(db, DOC_PATH.collection, DOC_PATH.document);
+      await setDoc(ref, {
+        groups:    state.groups,
+        bookmarks: state.bookmarks,
+        updatedAt: new Date().toISOString()
+      });
+      // Also mirror to localStorage as offline fallback
+      localStorage.setItem('redirects_fallback', JSON.stringify({
+        groups: state.groups, bookmarks: state.bookmarks
+      }));
+      setSyncStatus('synced');
+    } catch (e) {
+      console.error('Firestore save error:', e);
+      setSyncStatus('error');
+    }
+  }, 600);
+}
+
 function seedDefaults() {
-  const g1 = { id: uid(), name: 'General',  color: '#6c63ff' };
-  const g2 = { id: uid(), name: 'Dev Tools', color: '#1fd18a' };
-  state.groups = [g1, g2];
+  const g1 = { id: uid(), name: 'General',   color: '#6c63ff' };
+  const g2 = { id: uid(), name: 'Dev Tools',  color: '#1fd18a' };
+  state.groups    = [g1, g2];
   state.bookmarks = [
-    { id: uid(), name: 'GitHub',    url: 'https://github.com',                groupId: g2.id, iconMode: 'favicon', emoji: '', hint: 'Code hosting & version control' },
-    { id: uid(), name: 'MDN Docs',  url: 'https://developer.mozilla.org',     groupId: g2.id, iconMode: 'favicon', emoji: '', hint: 'Web API reference' },
-    { id: uid(), name: 'Arch Wiki', url: 'https://wiki.archlinux.org',        groupId: g2.id, iconMode: 'emoji',   emoji: '🐉', hint: 'Everything about Arch Linux' },
-    { id: uid(), name: 'YouTube',   url: 'https://youtube.com',               groupId: g1.id, iconMode: 'emoji',   emoji: '🎬', hint: '' },
+    { id: uid(), name: 'GitHub',    url: 'https://github.com',            groupId: g2.id, iconMode: 'favicon', emoji: '', hint: 'Code hosting & version control' },
+    { id: uid(), name: 'MDN Docs',  url: 'https://developer.mozilla.org', groupId: g2.id, iconMode: 'favicon', emoji: '', hint: 'Web API reference' },
+    { id: uid(), name: 'Arch Wiki', url: 'https://wiki.archlinux.org',    groupId: g2.id, iconMode: 'emoji',   emoji: '🐉', hint: 'Everything Arch Linux' },
+    { id: uid(), name: 'YouTube',   url: 'https://youtube.com',           groupId: g1.id, iconMode: 'emoji',   emoji: '🎬', hint: '' },
   ];
   cloudSave();
 }
@@ -82,15 +158,15 @@ function setSyncStatus(status) {
   const el = document.getElementById('sync-status');
   if (!el) return;
   el.className = 'sync-status ' + status;
-  const labels = { syncing: 'saving…', synced: 'synced', error: 'error' };
-  el.querySelector('.sync-label').textContent = labels[status] || status;
+  const labels = { syncing: 'saving…', synced: 'synced', error: 'offline' };
+  el.querySelector('.sync-label').textContent = labels[status] ?? status;
 }
 
 function uid() {
   return Math.random().toString(36).slice(2, 9) + Date.now().toString(36);
 }
 
-// ── Render ─────────────────────────────────
+// ── Render ───────────────────────────────────────────────
 
 function setView(v) {
   state.currentView = v;
@@ -129,21 +205,24 @@ function getFilteredBookmarks(groupId) {
   const q = getQ();
   return state.bookmarks.filter(b => {
     const inGroup = groupId ? b.groupId === groupId : true;
-    const matchQ  = !q || b.name.toLowerCase().includes(q) || b.url.toLowerCase().includes(q) || (b.hint||'').toLowerCase().includes(q);
+    const matchQ  = !q || b.name.toLowerCase().includes(q)
+                       || b.url.toLowerCase().includes(q)
+                       || (b.hint || '').toLowerCase().includes(q);
     return inGroup && matchQ;
   });
 }
 
 function renderMain() {
   const main = document.getElementById('main-area');
-  const v = state.currentView;
+  const v    = state.currentView;
+
   if (v === 'all') {
     if (!state.groups.length) {
       main.innerHTML = `<div class="empty"><div class="empty-icon">⊙</div><div class="empty-text">No groups yet — create one to start.</div></div>`;
       return;
     }
     let html = `<div class="all-groups-title"><span>All Bookmarks</span></div>`;
-    let any = false;
+    let any  = false;
     state.groups.forEach((g, i) => {
       const bms = getFilteredBookmarks(g.id);
       if (bms.length === 0 && getQ()) return;
@@ -195,7 +274,7 @@ function renderCard(b, ci) {
       <div class="card-actions">
         <div class="card-action-btn open-btn" onclick="openBM('${b.id}')" title="Open">↗</div>
         <div class="card-action-btn edit-btn" onclick="openEditModal('${b.id}')" title="Edit">✎</div>
-        <div class="card-action-btn del-btn" onclick="deleteBM('${b.id}')" title="Delete">✕</div>
+        <div class="card-action-btn del-btn"  onclick="deleteBM('${b.id}')"  title="Delete">✕</div>
       </div>
       <div class="card-top">
         <div class="card-icon-wrap">${iconHtml}</div>
@@ -219,10 +298,10 @@ function attachCardEvents() {
 function updateCounts() {
   const total = state.bookmarks.length;
   document.getElementById('total-count').textContent = total + ' link' + (total !== 1 ? 's' : '');
-  document.getElementById('count-all').textContent = total;
+  document.getElementById('count-all').textContent   = total;
 }
 
-// ── Actions ────────────────────────────────
+// ── Actions ──────────────────────────────────────────────
 
 function openBM(id) {
   const b = state.bookmarks.find(x => x.id === id);
@@ -252,44 +331,40 @@ function openAddToGroup(groupId) {
   setTimeout(() => document.getElementById('bm-name').focus(), 60);
 }
 
-// ── Icon Picker ────────────────────────────
+// ── Icon Picker ───────────────────────────────────────────
 
-let _iconPickerTarget = 'add'; // 'add' | 'edit'
+let _iconPickerTarget = 'add';
 
 function initIconPicker(target) {
   _iconPickerTarget = target;
   const prefix = target === 'add' ? 'bm' : 'edit';
-  state.iconMode = 'favicon';
-  state.selectedEmoji = '🔗';
   renderIconPicker(prefix);
 }
 
 function renderIconPicker(prefix) {
-  // Build tabs
   const tabsEl = document.getElementById(prefix + '-icon-tabs');
   tabsEl.innerHTML = `
     <button class="icon-tab ${state.iconMode==='favicon'?'active':''}" onclick="switchIconTab('${prefix}','favicon')">🌐 Website Icon</button>
-    <button class="icon-tab ${state.iconMode==='emoji'?'active':''}" onclick="switchIconTab('${prefix}','emoji')">😀 Emoji</button>`;
+    <button class="icon-tab ${state.iconMode==='emoji'?'active':''}"   onclick="switchIconTab('${prefix}','emoji')">😀 Emoji</button>`;
 
-  // Favicon pane
-  const fPane = document.getElementById(prefix + '-icon-favicon-pane');
   const urlVal = document.getElementById(prefix === 'bm' ? 'bm-url' : 'edit-url').value.trim();
   const domain = getDomain(urlVal);
+
+  const fPane = document.getElementById(prefix + '-icon-favicon-pane');
   fPane.className = 'icon-pane' + (state.iconMode === 'favicon' ? ' active' : '');
   fPane.innerHTML = `
     <div class="icon-preview-row">
       <div class="favicon-preview-img" id="${prefix}-fav-preview">
-        ${domain ? `<img src="https://www.google.com/s2/favicons?domain=${domain}&sz=32" onerror="this.parentNode.innerHTML='🔗'">` : '🌐'}
+        ${domain ? `<img src="https://www.google.com/s2/favicons?domain=${domain}&sz=32" onerror="this.parentNode.innerHTML='🌐'">` : '🌐'}
       </div>
-      <span class="favicon-info">${domain ? 'Auto-fetched from <b>' + esc(domain) + '</b>' : 'Enter URL first — icon fetches automatically'}</span>
+      <span class="favicon-info">${domain ? 'Auto-fetched from <b>' + esc(domain) + '</b>' : 'Enter a URL above — icon loads automatically'}</span>
     </div>`;
 
-  // Emoji pane
   const ePane = document.getElementById(prefix + '-icon-emoji-pane');
   ePane.className = 'icon-pane' + (state.iconMode === 'emoji' ? ' active' : '');
   ePane.innerHTML = `
     <div class="icon-preview-row">
-      <div class="icon-preview" id="${prefix}-emoji-preview">${state.selectedEmoji}</div>
+      <div class="icon-preview">${state.selectedEmoji}</div>
       <span class="icon-preview-label">Selected: ${state.selectedEmoji}</span>
     </div>
     <div class="emoji-grid">
@@ -310,21 +385,21 @@ function pickEmoji(prefix, emoji) {
 function refreshFaviconPreview(prefix) {
   const urlVal = document.getElementById(prefix === 'bm' ? 'bm-url' : 'edit-url').value.trim();
   const domain = getDomain(urlVal);
-  const prev = document.getElementById(prefix + '-fav-preview');
+  const prev   = document.getElementById(prefix + '-fav-preview');
   if (!prev) return;
-  if (domain) {
-    prev.innerHTML = `<img src="https://www.google.com/s2/favicons?domain=${domain}&sz=32" onerror="this.parentNode.innerHTML='🌐'">`;
-  } else {
-    prev.innerHTML = '🌐';
-  }
+  prev.innerHTML = domain
+    ? `<img src="https://www.google.com/s2/favicons?domain=${domain}&sz=32" onerror="this.parentNode.innerHTML='🌐'">`
+    : '🌐';
 }
 
-// ── Modals ─────────────────────────────────
+// ── Modals ────────────────────────────────────────────────
 
 function openModal(type) {
   if (type === 'bookmark') {
     resetBookmarkForm();
     populateGroupSelect('bm-group');
+    state.iconMode     = 'favicon';
+    state.selectedEmoji = '🔗';
     initIconPicker('add');
   }
   if (type === 'group') {
@@ -340,21 +415,19 @@ function closeModal(type) {
 }
 
 function resetBookmarkForm() {
-  document.getElementById('bm-name').value = '';
-  document.getElementById('bm-url').value = '';
-  document.getElementById('bm-hint').value = '';
+  ['bm-name','bm-url','bm-hint'].forEach(id => document.getElementById(id).value = '');
 }
 
 function populateGroupSelect(selectId) {
-  const sel = document.getElementById(selectId);
-  sel.innerHTML = state.groups.map(g => `<option value="${g.id}">${esc(g.name)}</option>`).join('');
+  document.getElementById(selectId).innerHTML =
+    state.groups.map(g => `<option value="${g.id}">${esc(g.name)}</option>`).join('');
 }
 
 function buildSwatches(prefix) {
-  const cont = document.getElementById(prefix + '-color-swatches');
-  cont.innerHTML = COLORS.map(c =>
-    `<div class="color-swatch${c === state.selectedColor ? ' selected' : ''}" style="background:${c}" onclick="selectColor('${prefix}','${c}')"></div>`
-  ).join('');
+  document.getElementById(prefix + '-color-swatches').innerHTML =
+    COLORS.map(c =>
+      `<div class="color-swatch${c===state.selectedColor?' selected':''}" style="background:${c}" onclick="selectColor('${prefix}','${c}')"></div>`
+    ).join('');
 }
 
 function selectColor(prefix, c) {
@@ -372,7 +445,7 @@ function saveGroup() {
 
 function saveBookmark() {
   const name = document.getElementById('bm-name').value.trim();
-  let url    = document.getElementById('bm-url').value.trim();
+  let   url  = document.getElementById('bm-url').value.trim();
   const hint = document.getElementById('bm-hint').value.trim();
   const groupId = document.getElementById('bm-group').value;
   if (!name) { shake('bm-name'); return; }
@@ -381,7 +454,7 @@ function saveBookmark() {
   state.bookmarks.push({
     id: uid(), name, url, hint, groupId,
     iconMode: state.iconMode,
-    emoji: state.iconMode === 'emoji' ? state.selectedEmoji : ''
+    emoji:    state.iconMode === 'emoji' ? state.selectedEmoji : ''
   });
   cloudSave(); closeModal('bookmark'); renderAll();
   toast('Bookmark saved ✓');
@@ -396,8 +469,8 @@ function openEditModal(id) {
   document.getElementById('edit-hint').value = b.hint || '';
   populateGroupSelect('edit-group');
   document.getElementById('edit-group').value = b.groupId;
-  state.iconMode     = b.iconMode || 'favicon';
-  state.selectedEmoji = b.emoji   || '🔗';
+  state.iconMode      = b.iconMode || 'favicon';
+  state.selectedEmoji = b.emoji    || '🔗';
   initIconPicker('edit');
   document.getElementById('modal-edit').classList.add('open');
 }
@@ -418,12 +491,12 @@ function updateBookmark() {
   toast('Bookmark updated ✓');
 }
 
-// ── Export / Import ────────────────────────
+// ── Export / Import ───────────────────────────────────────
 
 function exportData() {
   const json = JSON.stringify({ groups: state.groups, bookmarks: state.bookmarks }, null, 2);
   const a = Object.assign(document.createElement('a'), {
-    href: URL.createObjectURL(new Blob([json], { type: 'application/json' })),
+    href:     URL.createObjectURL(new Blob([json], { type: 'application/json' })),
     download: 'redirects-backup.json'
   });
   a.click();
@@ -445,7 +518,7 @@ function importData(e) {
   e.target.value = '';
 }
 
-// ── Utils ──────────────────────────────────
+// ── Utils ─────────────────────────────────────────────────
 
 function getDomain(url) {
   try { return new URL(url.startsWith('http') ? url : 'https://' + url).hostname; }
@@ -467,11 +540,14 @@ function toast(msg) {
 function shake(id) {
   const el = document.getElementById(id);
   el.style.borderColor = 'var(--red)';
-  el.animate([{transform:'translateX(-4px)'},{transform:'translateX(4px)'},{transform:'translateX(-4px)'},{transform:'translateX(0)'}], {duration:240});
+  el.animate([
+    {transform:'translateX(-4px)'},{transform:'translateX(4px)'},
+    {transform:'translateX(-4px)'},{transform:'translateX(0)'}
+  ], {duration: 240});
   setTimeout(() => el.style.borderColor = '', 900);
 }
 
-// ── Global event wiring ────────────────────
+// ── Global events ─────────────────────────────────────────
 
 document.querySelectorAll('.overlay').forEach(ov => {
   ov.addEventListener('click', function(e) {
@@ -484,5 +560,15 @@ document.addEventListener('keydown', e => {
   if ((e.ctrlKey || e.metaKey) && e.key === 'k') { e.preventDefault(); document.getElementById('search-input').focus(); }
 });
 
-// ── Boot ───────────────────────────────────
+// ── Boot ──────────────────────────────────────────────────
 cloudLoad();
+
+// Expose to global scope (needed for inline onclick handlers with type="module")
+Object.assign(window, {
+  setView, renderAll, openModal, closeModal,
+  openAddToGroup, openEditModal, openBM, deleteBM, deleteGroup,
+  saveGroup, saveBookmark, updateBookmark,
+  switchIconTab, pickEmoji, refreshFaviconPreview,
+  selectColor, buildSwatches,
+  exportData, importData
+});
