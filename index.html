@@ -6,6 +6,34 @@
 <title>Redirects — Bookmark Manager</title>
 <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="style.css">
+<style>
+  /* ── Auth button ── */
+  .auth-btn {
+    background: none;
+    border: 1px solid transparent;
+    cursor: pointer;
+    font-size: 1.05rem;
+    padding: 4px 9px;
+    border-radius: 7px;
+    transition: background 0.15s, border-color 0.15s;
+    color: inherit;
+    line-height: 1;
+  }
+  .auth-btn:hover { background: var(--surface2); border-color: var(--border); }
+
+  /* Auth-only sidebar buttons — hidden until body.authed */
+  .auth-only { display: none !important; }
+  body.authed .auth-only { display: flex !important; }
+
+  /* Auth modal error */
+  .field-error {
+    color: #f05a5a;
+    font-size: 0.73rem;
+    margin-top: 5px;
+    min-height: 1.1em;
+    font-family: var(--font-mono, monospace);
+  }
+</style>
 </head>
 <body>
 <div class="shell">
@@ -26,6 +54,7 @@
         <span class="s-icon">⌕</span>
         <input type="text" id="search-input" placeholder="search… (Ctrl+K)" oninput="renderAll()">
       </div>
+      <button class="auth-btn" id="auth-btn" onclick="handleAuthClick()" title="Sign in">🔒</button>
     </div>
   </header>
 
@@ -45,15 +74,15 @@
     <div class="sidebar-section">
       <div class="sidebar-label">
         Groups
-        <button class="sidebar-add-btn" onclick="openModal('group')" title="New group">+</button>
+        <button class="sidebar-add-btn auth-only" onclick="openModal('group')" title="New group">+</button>
       </div>
       <div id="sidebar-groups"></div>
     </div>
 
     <div class="sidebar-divider"></div>
-    <button class="sidebar-btn" onclick="openModal('bookmark')">＋ &nbsp;Add Bookmark</button>
-    <button class="sidebar-btn" onclick="exportData()">↑ &nbsp;Export JSON</button>
-    <button class="sidebar-btn" onclick="document.getElementById('import-file').click()">↓ &nbsp;Import JSON</button>
+    <button class="sidebar-btn auth-only" onclick="openModal('bookmark')">＋ &nbsp;Add Bookmark</button>
+    <button class="sidebar-btn auth-only" onclick="exportData()">↑ &nbsp;Export JSON</button>
+    <button class="sidebar-btn auth-only" onclick="document.getElementById('import-file').click()">↓ &nbsp;Import JSON</button>
     <input type="file" id="import-file" accept=".json" style="display:none" onchange="importData(event)">
   </aside>
 
@@ -84,7 +113,6 @@
       <textarea id="bm-hint" placeholder="A short description or reminder…"></textarea>
     </div>
 
-    <!-- Icon picker -->
     <div class="field">
       <label>Icon</label>
       <div id="bm-icon-tabs"></div>
@@ -151,7 +179,6 @@
       <textarea id="edit-hint" placeholder="A short description or reminder…"></textarea>
     </div>
 
-    <!-- Icon picker -->
     <div class="field">
       <label>Icon</label>
       <div id="edit-icon-tabs"></div>
@@ -167,6 +194,45 @@
     <div class="modal-actions">
       <button class="btn btn-ghost" onclick="closeModal('edit')">Cancel</button>
       <button class="btn btn-primary" onclick="updateBookmark()">Update</button>
+    </div>
+  </div>
+</div>
+
+
+<!-- ══════════════════════════════════════
+     Modal: Sign In
+════════════════════════════════════════ -->
+<div class="overlay" id="modal-auth">
+  <div class="modal">
+    <div class="modal-title">Sign In</div>
+    <div class="modal-sub">// admin access</div>
+
+    <div class="field">
+      <label>Username</label>
+      <input
+        type="text"
+        id="auth-username"
+        placeholder="your_username"
+        autocomplete="username"
+        maxlength="32"
+        spellcheck="false"
+        autocapitalize="none"
+      >
+      <div class="field-error" id="auth-error"></div>
+    </div>
+    <div class="field">
+      <label>Password</label>
+      <input
+        type="password"
+        id="auth-password"
+        placeholder="••••••••"
+        autocomplete="current-password"
+      >
+    </div>
+
+    <div class="modal-actions">
+      <button class="btn btn-ghost" onclick="closeModal('auth')">Cancel</button>
+      <button class="btn btn-primary" id="auth-submit-btn" onclick="authSignIn()">Sign In</button>
     </div>
   </div>
 </div>

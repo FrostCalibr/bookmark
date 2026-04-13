@@ -1,45 +1,41 @@
 // ═══════════════════════════════════════════════════════
 //  REDIRECTS — app.js
-//  Cloud sync via Firebase Firestore
+//  Cloud sync via Firebase Firestore + Auth
 //
 //  ⚙️  SETUP:
-//  1. Go to console.firebase.google.com → New project
-//  2. Add Web app → copy firebaseConfig below
-//  3. Firestore Database → Create → Test mode
-//  4. Replace the firebaseConfig object below with yours
+//  1. Firebase Console → Authentication → Sign-in method
+//     → Email/Password → Enable
+//  2. Authentication → Users → Add user
+//     Email: yourusername@bookmark.local   Password: yourpassword
+//  3. Firestore → Rules → publish:
+//     allow read: if true;
+//     allow write: if request.auth != null;
 // ═══════════════════════════════════════════════════════
 
 import { initializeApp } from "https://www.gstatic.com/firebasejs/11.4.0/firebase-app.js";
 import {
   getFirestore, doc, getDoc, setDoc, onSnapshot
 } from "https://www.gstatic.com/firebasejs/11.4.0/firebase-firestore.js";
+import {
+  getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged
+} from "https://www.gstatic.com/firebasejs/11.4.0/firebase-auth.js";
 
-// ── 🔧 PASTE YOUR FIREBASE CONFIG HERE ──────────────────
+// ── 🔧 FIREBASE CONFIG ───────────────────────────────────
 const firebaseConfig = {
-
   apiKey: "AIzaSyCAugqjSIb7aTzI0AGjwt2tJZxWpP05oMI",
-
   authDomain: "bookmark-b6fe9.firebaseapp.com",
-
   projectId: "bookmark-b6fe9",
-
   storageBucket: "bookmark-b6fe9.firebasestorage.app",
-
   messagingSenderId: "349146218114",
-
   appId: "1:349146218114:web:08b207f4c8074a79437e9b",
-
   measurementId: "G-KDT7XBBG2X"
-
 };
-
-
-// ────────────────────────────────────────────────────────
 
 const DOC_PATH = { collection: "redirects", document: "data" };
 
-const app = initializeApp(firebaseConfig);
-const db  = getFirestore(app);
+const app  = initializeApp(firebaseConfig);
+const db   = getFirestore(app);
+const auth = getAuth(app);
 
 // ── Constants ────────────────────────────────────────────
 
@@ -71,7 +67,91 @@ let state = {
   selectedEmoji: '🔗',
 };
 
+let currentUser  = null;
 let _saveTimeout = null;
+
+// ── Auth ─────────────────────────────────────────────────
+
+// Sanitize: lowercase alphanumeric + underscore only, max 32 chars
+function sanitizeUsername(raw) {
+  return String(raw).trim().toLowerCase().replace(/[^a-z0-9_]/g, '').slice(0, 32);
+}
+
+async function authSignIn() {
+  const rawUser = document.getElementById('auth-username').value;
+  const rawPass = document.getElementById('auth-password').value;
+
+  const username = sanitizeUsername(rawUser);
+  const password = rawPass.trim();
+
+  if (!username) { showAuthError('Username is required'); return; }
+  if (username !== rawUser.trim().toLowerCase()) {
+    showAuthError('Only letters, numbers, and underscores allowed');
+    return;
+  }
+  if (!password) { showAuthError('Password is required'); shake('auth-password'); return; }
+  if (password.length < 6) { showAuthError('Password must be at least 6 characters'); shake('auth-password'); return; }
+
+  const btn = document.getElementById('auth-submit-btn');
+  btn.disabled    = true;
+  btn.textContent = 'Signing in…';
+  clearAuthError();
+
+  try {
+    await signInWithEmailAndPassword(auth, `${username}@bookmark.local`, password);
+    document.getElementById('auth-username').value = '';
+    document.getElementById('auth-password').value = '';
+    closeModal('auth');
+    toast('Signed in ✓');
+  } catch (e) {
+    const msgs = {
+      'auth/invalid-credential':     'Wrong username or password',
+      'auth/user-not-found':         'User not found',
+      'auth/wrong-password':         'Wrong password',
+      'auth/too-many-requests':      'Too many attempts — try again later',
+      'auth/network-request-failed': 'Network error — check connection',
+    };
+    showAuthError(msgs[e.code] || 'Sign in failed');
+  } finally {
+    btn.disabled    = false;
+    btn.textContent = 'Sign In';
+  }
+}
+
+async function authSignOut() {
+  await signOut(auth);
+  toast('Signed out');
+}
+
+function handleAuthClick() {
+  currentUser ? authSignOut() : openModal('auth');
+}
+
+function showAuthError(msg) {
+  const el = document.getElementById('auth-error');
+  if (el) el.textContent = msg;
+  shake('auth-username');
+}
+
+function clearAuthError() {
+  const el = document.getElementById('auth-error');
+  if (el) el.textContent = '';
+}
+
+function updateAuthUI() {
+  const authed = !!currentUser;
+  document.body.classList.toggle('authed', authed);
+  const btn = document.getElementById('auth-btn');
+  if (btn) {
+    btn.textContent = authed ? '🔓' : '🔒';
+    btn.title       = authed ? 'Sign out' : 'Sign in';
+  }
+}
+
+function requireAuth() {
+  if (!currentUser) { toast('🔒 Sign in to make changes'); return false; }
+  return true;
+}
 
 // ── Firestore ────────────────────────────────────────────
 
@@ -89,7 +169,6 @@ async function cloudLoad() {
     }
     setSyncStatus('synced');
 
-    // Listen for real-time updates (multi-device sync)
     onSnapshot(ref, (snap) => {
       if (!snap.exists()) return;
       const data = snap.data();
@@ -102,7 +181,6 @@ async function cloudLoad() {
   } catch (e) {
     console.error('Firestore load error:', e);
     setSyncStatus('error');
-    // Fall back to localStorage if Firestore fails
     const saved = localStorage.getItem('redirects_fallback');
     if (saved) {
       try {
@@ -117,7 +195,6 @@ async function cloudLoad() {
   renderAll();
 }
 
-// Debounced save — batches rapid changes into one write
 function cloudSave() {
   setSyncStatus('syncing');
   clearTimeout(_saveTimeout);
@@ -129,7 +206,6 @@ function cloudSave() {
         bookmarks: state.bookmarks,
         updatedAt: new Date().toISOString()
       });
-      // Also mirror to localStorage as offline fallback
       localStorage.setItem('redirects_fallback', JSON.stringify({
         groups: state.groups, bookmarks: state.bookmarks
       }));
@@ -243,16 +319,18 @@ function renderGroupSection(g, bms, i) {
   const cards = bms.length
     ? bms.map((b, ci) => renderCard(b, ci)).join('')
     : `<div class="empty"><div class="empty-icon" style="font-size:1.4rem">⊘</div><div class="empty-text">no bookmarks yet</div></div>`;
+
+  const adminActions = currentUser ? `
+    <button class="btn btn-ghost btn-sm" onclick="openAddToGroup('${g.id}')">+ Add</button>
+    <button class="btn btn-danger" onclick="deleteGroup('${g.id}')">Delete</button>` : '';
+
   return `
     <div class="group-section" style="animation-delay:${i * 0.04}s" data-gid="${g.id}">
       <div class="group-header">
         <span class="group-dot" style="background:${g.color}"></span>
         <span class="group-title">${esc(g.name)}</span>
         <span class="count-badge">${bms.length}</span>
-        <div class="group-header-actions">
-          <button class="btn btn-ghost btn-sm" onclick="openAddToGroup('${g.id}')">+ Add</button>
-          <button class="btn btn-danger" onclick="deleteGroup('${g.id}')">Delete</button>
-        </div>
+        <div class="group-header-actions">${adminActions}</div>
       </div>
       <div class="cards-grid">${cards}</div>
     </div>`;
@@ -268,13 +346,16 @@ function renderCard(b, ci) {
   } else {
     iconHtml = '🔗';
   }
-  const hintHtml = b.hint ? `<div class="card-hint">${esc(b.hint)}</div>` : '';
+  const hintHtml  = b.hint ? `<div class="card-hint">${esc(b.hint)}</div>` : '';
+  const adminBtns = currentUser ? `
+    <div class="card-action-btn edit-btn" onclick="openEditModal('${b.id}')" title="Edit">✎</div>
+    <div class="card-action-btn del-btn"  onclick="deleteBM('${b.id}')"  title="Delete">✕</div>` : '';
+
   return `
     <div class="bookmark-card" data-bid="${b.id}" style="animation-delay:${ci * 0.03}s">
       <div class="card-actions">
         <div class="card-action-btn open-btn" onclick="openBM('${b.id}')" title="Open">↗</div>
-        <div class="card-action-btn edit-btn" onclick="openEditModal('${b.id}')" title="Edit">✎</div>
-        <div class="card-action-btn del-btn"  onclick="deleteBM('${b.id}')"  title="Delete">✕</div>
+        ${adminBtns}
       </div>
       <div class="card-top">
         <div class="card-icon-wrap">${iconHtml}</div>
@@ -309,11 +390,13 @@ function openBM(id) {
 }
 
 function deleteBM(id) {
+  if (!requireAuth()) return;
   state.bookmarks = state.bookmarks.filter(x => x.id !== id);
   cloudSave(); renderAll(); toast('Bookmark removed');
 }
 
 function deleteGroup(id) {
+  if (!requireAuth()) return;
   if (state.bookmarks.some(b => b.groupId === id)) {
     if (!confirm('Delete group and all its bookmarks?')) return;
     state.bookmarks = state.bookmarks.filter(b => b.groupId !== id);
@@ -324,6 +407,7 @@ function deleteGroup(id) {
 }
 
 function openAddToGroup(groupId) {
+  if (!requireAuth()) return;
   resetBookmarkForm();
   populateGroupSelect('bm-group');
   document.getElementById('bm-group').value = groupId;
@@ -396,6 +480,7 @@ function refreshFaviconPreview(prefix) {
 
 function openModal(type) {
   if (type === 'bookmark') {
+    if (!requireAuth()) return;
     resetBookmarkForm();
     populateGroupSelect('bm-group');
     state.iconMode     = 'favicon';
@@ -403,6 +488,7 @@ function openModal(type) {
     initIconPicker('add');
   }
   if (type === 'group') {
+    if (!requireAuth()) return;
     buildSwatches('grp');
     document.getElementById('grp-name').value = '';
   }
@@ -412,6 +498,7 @@ function openModal(type) {
 
 function closeModal(type) {
   document.getElementById('modal-' + type).classList.remove('open');
+  if (type === 'auth') clearAuthError();
 }
 
 function resetBookmarkForm() {
@@ -436,6 +523,7 @@ function selectColor(prefix, c) {
 }
 
 function saveGroup() {
+  if (!requireAuth()) return;
   const name = document.getElementById('grp-name').value.trim();
   if (!name) { shake('grp-name'); return; }
   state.groups.push({ id: uid(), name, color: state.selectedColor });
@@ -444,6 +532,7 @@ function saveGroup() {
 }
 
 function saveBookmark() {
+  if (!requireAuth()) return;
   const name = document.getElementById('bm-name').value.trim();
   let   url  = document.getElementById('bm-url').value.trim();
   const hint = document.getElementById('bm-hint').value.trim();
@@ -461,6 +550,7 @@ function saveBookmark() {
 }
 
 function openEditModal(id) {
+  if (!requireAuth()) return;
   const b = state.bookmarks.find(x => x.id === id);
   if (!b) return;
   document.getElementById('edit-id').value   = b.id;
@@ -476,6 +566,7 @@ function openEditModal(id) {
 }
 
 function updateBookmark() {
+  if (!requireAuth()) return;
   const id = document.getElementById('edit-id').value;
   const b  = state.bookmarks.find(x => x.id === id);
   if (!b) return;
@@ -494,6 +585,7 @@ function updateBookmark() {
 // ── Export / Import ───────────────────────────────────────
 
 function exportData() {
+  if (!requireAuth()) return;
   const json = JSON.stringify({ groups: state.groups, bookmarks: state.bookmarks }, null, 2);
   const a = Object.assign(document.createElement('a'), {
     href:     URL.createObjectURL(new Blob([json], { type: 'application/json' })),
@@ -504,6 +596,7 @@ function exportData() {
 }
 
 function importData(e) {
+  if (!requireAuth()) return;
   const file = e.target.files[0]; if (!file) return;
   const reader = new FileReader();
   reader.onload = ev => {
@@ -539,6 +632,7 @@ function toast(msg) {
 
 function shake(id) {
   const el = document.getElementById(id);
+  if (!el) return;
   el.style.borderColor = 'var(--red)';
   el.animate([
     {transform:'translateX(-4px)'},{transform:'translateX(4px)'},
@@ -558,17 +652,25 @@ document.querySelectorAll('.overlay').forEach(ov => {
 document.addEventListener('keydown', e => {
   if (e.key === 'Escape') document.querySelectorAll('.overlay.open').forEach(ov => ov.classList.remove('open'));
   if ((e.ctrlKey || e.metaKey) && e.key === 'k') { e.preventDefault(); document.getElementById('search-input').focus(); }
+  if (e.key === 'Enter' && document.getElementById('modal-auth')?.classList.contains('open')) authSignIn();
 });
 
 // ── Boot ──────────────────────────────────────────────────
+
+onAuthStateChanged(auth, user => {
+  currentUser = user;
+  updateAuthUI();
+  renderAll();
+});
+
 cloudLoad();
 
-// Expose to global scope (needed for inline onclick handlers with type="module")
 Object.assign(window, {
   setView, renderAll, openModal, closeModal,
   openAddToGroup, openEditModal, openBM, deleteBM, deleteGroup,
   saveGroup, saveBookmark, updateBookmark,
   switchIconTab, pickEmoji, refreshFaviconPreview,
   selectColor, buildSwatches,
-  exportData, importData
+  exportData, importData,
+  authSignIn, authSignOut, handleAuthClick,
 });
